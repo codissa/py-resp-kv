@@ -1,0 +1,49 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04]
+        python: ["3.10", "3.11", "3.12", "3.13"]
+        include:
+          - os: windows-latest
+            python: "3.12"
+          - os: macos-latest
+            python: "3.12"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - run: pip install -e ".[dev]"
+      - run: ruff check . && ruff format --check .
+      - run: pytest -v
+
+  compat-redis-cli:
+    # Drive our server with the real redis-cli and redis-benchmark binaries.
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: sudo apt-get update && sudo apt-get install -y redis-tools
+      - run: pip install -e .
+      - name: Start server
+        run: |
+          respkv --port 6390 &
+          for i in $(seq 1 50); do redis-cli -p 6390 PING && break; sleep 0.1; done
+      - name: redis-cli smoke test
+        run: |
+          test "$(redis-cli -p 6390 SET greeting hello)" = "OK"
+          test "$(redis-cli -p 6390 GET greeting)" = "hello"
+          test "$(redis-cli -p 6390 INCRBY n 41)" = "41"
+      - name: redis-benchmark
+        run: redis-benchmark -p 6390 -t set,get,incr,lpush -n 20000 -q
